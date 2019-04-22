@@ -73,6 +73,7 @@ class FrictionDetector(contactListener):
     def _contact(self, contact, begin):
         tile = None
         obj = None
+        #print('contact from: ' + str(contact))
         u1 = contact.fixtureA.body.userData
         u2 = contact.fixtureB.body.userData
         if u1 and "road_friction" in u1.__dict__:
@@ -83,11 +84,20 @@ class FrictionDetector(contactListener):
             obj  = u1
         if not tile:return
 
+        if obj not in self.env.wheels:
+            if obj is not None:
+                self.env.wheels[obj] = 0
+
+        if self.env.new_step:
+            self.env.new_step = False
+            self.env.wheels_on_road = 0
+
         tile.color[0] = ROAD_COLOR[0]
         tile.color[1] = ROAD_COLOR[1]
         tile.color[2] = ROAD_COLOR[2]
         if not obj or "tiles" not in obj.__dict__: return
         if begin:
+            self.env.wheels[obj] += 1
             obj.tiles.add(tile)
             #print tile.road_friction, "ADD", len(obj.tiles)
             if not tile.road_visited:
@@ -95,10 +105,13 @@ class FrictionDetector(contactListener):
                 self.env.reward += 1000.0/len(self.env.track)
                 self.env.tile_visited_count += 1
         else:
+            self.env.wheels[obj] -= 1
             obj.tiles.remove(tile)
             #print tile.road_friction, "DEL", len(obj.tiles) -- should delete to zero when on grass (this works)
 
-class CarRacing(gym.Env, EzPickle):
+        self.env.wheels_on_road += len(obj.tiles)
+
+class CarRacingV1(gym.Env, EzPickle):
     metadata = {
         'render.modes': ['human', 'rgb_array', 'state_pixels'],
         'video.frames_per_second' : FPS
@@ -118,6 +131,11 @@ class CarRacing(gym.Env, EzPickle):
         self.reward = 0.0
         self.prev_reward = 0.0
         self.verbose = verbose
+        self.wheels_on_road = 0
+        self.new_step = False
+        self.sem = 0
+        self.wheel_reward = 0.025
+        self.wheels={}
 
         self.action_space = spaces.Box( np.array([-1,0,0]), np.array([+1,+1,+1]), dtype=np.float32)  # steer, gas, brake
         self.observation_space = spaces.Box(low=0, high=255, shape=(STATE_H, STATE_W, 3), dtype=np.uint8)
@@ -298,6 +316,7 @@ class CarRacing(gym.Env, EzPickle):
         return self.step(None)[0]
 
     def step(self, action):
+        self.new_step = True
         if action is not None:
             self.car.steer(-action[0])
             self.car.gas(action[1])
@@ -313,6 +332,11 @@ class CarRacing(gym.Env, EzPickle):
         done = False
         if action is not None: # First step without action, called from reset()
             self.reward -= 0.1
+
+            for i in self.wheels.values():
+                if i == 0:
+                    self.reward -= self.wheel_reward
+
             # We actually don't want to count fuel spent, we want car to be faster.
             #self.reward -=  10 * self.car.fuel_spent / ENGINE_POWER
             self.car.fuel_spent = 0.0
@@ -471,7 +495,7 @@ if __name__=="__main__":
         if k==key.RIGHT and a[0]==+1.0: a[0] = 0
         if k==key.UP:    a[1] = 0
         if k==key.DOWN:  a[2] = 0
-    env = CarRacing()
+    env = CarRacingV1()
     env.render()
     env.viewer.window.on_key_press = key_press
     env.viewer.window.on_key_release = key_release
